@@ -196,6 +196,11 @@ input, select, textarea {
 .conf-item{background:#fff;border:1px solid #e7ece0;border-radius:18px;padding:14px 16px;margin-bottom:10px}
 .conf-check{width:22px;height:22px;border-radius:6px;accent-color:#4f9d2e;cursor:pointer;flex:none}
 .scan-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+
+/* Bottone cestino inline */
+.del-btn{width:28px;height:28px;border-radius:9px;background:#fef2f2;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;color:#dc2626;flex:none;transition:background .15s}
+.del-btn:active{background:#fee2e2}
 </style>
 </head>
 <body>
@@ -734,8 +739,7 @@ function SpesaScreen({data,onToggle,onRemove,onQuickAdd}){
         <div className="sh"><h2>Da prendere</h2><span className="badge">{dap.length}</span></div>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
           {dap.map((v,i)=>(
-            <SwipeRow key={v.id} onDelete={()=>onRemove(v)}>
-              <div className="card row enter" style={{animationDelay:`${i*28}ms`,margin:0,borderRadius:20}}
+            <div className="card row enter" key={v.id} style={{animationDelay:`${i*28}ms`}}
                 onClick={()=>onToggle(v)}>
                 <span className="chk"/>
                 <div style={{flex:1,minWidth:0}}>
@@ -743,11 +747,15 @@ function SpesaScreen({data,onToggle,onRemove,onQuickAdd}){
                   <div className="pmeta">{v.c?.nome} · {v.qta} {v.p.unita}</div>
                   {v.p.prezzo>0&&<span className="chip"><ITag/>{eur(v.p.prezzo)}{v.sm?` · ${v.sm.nome}`:""}</span>}
                 </div>
-                <span className="av" style={{width:28,height:28,fontSize:12,background:v.m?.colore||"#aab39c"}}>
-                  {v.m?.ini||"?"}
-                </span>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span className="av" style={{width:28,height:28,fontSize:12,background:v.m?.colore||"#aab39c"}}>
+                    {v.m?.ini||"?"}
+                  </span>
+                  <button className="del-btn" onClick={e=>{e.stopPropagation();onRemove(v);}}>
+                    <ITrash s={14}/>
+                  </button>
+                </div>
               </div>
-            </SwipeRow>
           ))}
           {dap.length===0&&(
             <div className="empty">
@@ -844,8 +852,7 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
             const c=categorie.find(x=>x.id===p.cat_id);
             const esaurito=p.qta<=0;
             return(
-              <SwipeRow key={p.id} onDelete={()=>onDelete&&onDelete(p)}>
-              <div className="card row enter" style={{animationDelay:`${i*22}ms`,margin:0,borderRadius:20}} onClick={()=>onEdit(p)}>
+              <div className="card row enter" key={p.id} style={{animationDelay:`${i*22}ms`}} onClick={()=>onEdit(p)}>
                 <span className="dot" style={{width:40,height:40,background:c?.colore||"#7c876d",fontSize:17}}>
                   {p.nome[0].toUpperCase()}
                 </span>
@@ -858,11 +865,15 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
                       :<span>· {p.qta} {p.unita}</span>}
                   </div>
                 </div>
-                <button className="addbtn" onClick={e=>{e.stopPropagation();onAdd(p);}}>
-                  <IPlus s={17}c="#fff"/>
-                </button>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  <button className="addbtn" onClick={e=>{e.stopPropagation();onAdd(p);}}>
+                    <IPlus s={17}c="#fff"/>
+                  </button>
+                  <button className="del-btn" onClick={e=>{e.stopPropagation();onDelete&&onDelete(p);}}>
+                    <ITrash s={14}/>
+                  </button>
+                </div>
               </div>
-              </SwipeRow>
             );
           })}
           {lista.length===0&&<div className="empty">Nessun prodotto trovato</div>}

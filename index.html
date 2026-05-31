@@ -179,6 +179,23 @@ body{width:100%;height:100%;height:100dvh;
 .ord-btn{width:28px;height:28px;border-radius:8px;background:#f5f8f0;border:none;cursor:pointer;
   display:flex;align-items:center;justify-content:center;font-size:0;flex:none}
 .ord-btn:active{background:#e7ece0}
+
+/* ── iOS: font-size >= 16px previene auto-zoom su focus ─────── */
+input, select, textarea {
+  font-size: 16px !important;
+  touch-action: manipulation;
+}
+
+/* ── Scontrino Scanner ───────────────────────────────────────── */
+.scan-phase{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 24px;text-align:center;gap:12px}
+.scan-h{font-size:20px;font-weight:700}
+.scan-sub{font-size:14px;color:#7c876d;font-weight:500;line-height:1.5}
+.scan-img{width:100%;border-radius:18px;object-fit:contain;max-height:320px;margin-bottom:8px}
+.spinner{width:46px;height:46px;border:4px solid #e7ece0;border-top-color:#4f9d2e;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.conf-item{background:#fff;border:1px solid #e7ece0;border-radius:18px;padding:14px 16px;margin-bottom:10px}
+.conf-check{width:22px;height:22px;border-radius:6px;accent-color:#4f9d2e;cursor:pointer;flex:none}
+.scan-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
 </style>
 </head>
 <body>
@@ -216,6 +233,213 @@ const sbUpsert = (t,b,oc) => sbFetch(`${SB}/${t}?on_conflict=${oc}`, {
   headers:{'Prefer':'resolution=merge-duplicates,return=representation'},
   body:JSON.stringify(Array.isArray(b)?b:[b])
 }).then(r=>Array.isArray(r)?r[0]:r);
+
+
+/* ================================================================
+   SCONTRINO SCANNER — analisi AI della foto
+   ================================================================ */
+const FN_URL = 'https://fvuwwxwqojtzflcresgc.supabase.co/functions/v1/analyze-receipt';
+
+function ScontrinoScanner({data, onClose, onDone}) {
+  const [phase,setPhase]=useState('select'); // select|preview|analyzing|confirm|error
+  const [imgSrc,setImgSrc]=useState(null);
+  const [imgB64,setImgB64]=useState(null);
+  const [mtype,setMtype]=useState('image/jpeg');
+  const [items,setItems]=useState([]);
+  const [errMsg,setErrMsg]=useState('');
+  const fileRef=useRef(null);
+
+  const onFile=e=>{
+    const f=e.target.files[0]; if(!f)return;
+    setImgSrc(URL.createObjectURL(f));
+    setMtype(f.type||'image/jpeg');
+    const r=new FileReader();
+    r.onload=()=>setImgB64(r.result.split(',')[1]);
+    r.readAsDataURL(f);
+    setPhase('preview');
+    e.target.value=''; // reset so same file can be reselected
+  };
+
+  const analyze=async()=>{
+    setPhase('analyzing');
+    try{
+      const resp=await fetch(FN_URL,{
+        method:'POST',
+        headers:{'Content-Type':'application/json','apikey':KEY,'Authorization':`Bearer ${KEY}`},
+        body:JSON.stringify({imageData:imgB64,mediaType:mtype,categorie:data.categorie.map(c=>c.nome)})
+      });
+      const json=await resp.json();
+      if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
+      const enriched=(json.products||[]).map((p,i)=>({
+        ...p, i,
+        cat_id: data.categorie.find(c=>c.nome===p.cat_nome)?.id
+             || data.categorie.find(c=>c.nome==='Dispensa')?.id
+             || data.categorie[0]?.id,
+        selected:true,
+      }));
+      setItems(enriched);
+      setPhase(enriched.length>0?'confirm':'error');
+      if(enriched.length===0)setErrMsg('Nessun prodotto rilevato. Prova con una foto più nitida.');
+    }catch(err){
+      setErrMsg(err.message||'Errore sconosciuto');
+      setPhase('error');
+    }
+  };
+
+  const upd=(i,field,val)=>setItems(prev=>prev.map((p,j)=>j===i?{...p,[field]:val}:p));
+
+  const save=async()=>{
+    setPhase('analyzing');
+    for(const p of items.filter(p=>p.selected)){
+      await db.upsertProdotto({
+        nome:p.nome, cat_id:p.cat_id,
+        prezzo:parseFloat(String(p.prezzo).replace(',','.'))||0,
+        qta:parseFloat(p.qta)||1, unita:p.unita||'pz', sm_id:null,
+      });
+    }
+    onDone();
+  };
+
+  const nSel=items.filter(p=>p.selected).length;
+
+  /* ── phase: select ── */
+  if(phase==='select') return(
+    <div className="overlay">
+      <div className="backrow">
+        <button className="backbtn" onClick={onClose}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Scontrino</span>
+      </div>
+      <div className="scan-phase">
+        <div style={{fontSize:64,lineHeight:1}}>🧾</div>
+        <div className="scan-h">Fotografa lo scontrino</div>
+        <div className="scan-sub">L'AI rileverà automaticamente i prodotti e li aggiungerà all'inventario dopo la tua conferma</div>
+        <button className="btnG" style={{width:'100%',marginTop:8}} onClick={()=>fileRef.current.click()}>
+          <ICam s={20}c="#fff"/> Apri fotocamera / Libreria
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment"
+          style={{display:'none'}} onChange={onFile}/>
+      </div>
+    </div>
+  );
+
+  /* ── phase: preview ── */
+  if(phase==='preview') return(
+    <div className="overlay">
+      <div className="backrow">
+        <button className="backbtn" onClick={()=>setPhase('select')}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Anteprima</span>
+      </div>
+      <div className="scroll" style={{paddingTop:16}}>
+        <img src={imgSrc} alt="scontrino" className="scan-img"/>
+        <button className="btnG" onClick={analyze}><ISrc s={18}c="#fff"/> Analizza scontrino</button>
+        <button className="btnT" onClick={()=>{ setPhase('select'); setImgSrc(null); }}>
+          Scegli un'altra foto
+        </button>
+      </div>
+    </div>
+  );
+
+  /* ── phase: analyzing ── */
+  if(phase==='analyzing') return(
+    <div className="overlay" style={{alignItems:'center',justifyContent:'center'}}>
+      <div className="spinner"/>
+      <div style={{fontWeight:700,fontSize:18,marginTop:20}}>Analizzo lo scontrino…</div>
+      <div style={{color:'#7c876d',fontSize:14,marginTop:8}}>L'AI sta rilevando i prodotti</div>
+    </div>
+  );
+
+  /* ── phase: error ── */
+  if(phase==='error') return(
+    <div className="overlay">
+      <div className="backrow">
+        <button className="backbtn" onClick={onClose}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Errore</span>
+      </div>
+      <div className="scan-phase">
+        <div style={{fontSize:56}}>😕</div>
+        <div className="scan-h">Analisi non riuscita</div>
+        <div className="scan-sub">{errMsg||'Controlla che la chiave ANTHROPIC_API_KEY sia configurata in Supabase → Settings → Edge Functions → Secrets'}</div>
+        <button className="btnG" style={{width:'100%'}} onClick={()=>setPhase('preview')}>Riprova</button>
+        <button className="btnT" onClick={onClose}>Chiudi</button>
+      </div>
+    </div>
+  );
+
+  /* ── phase: confirm ── */
+  return(
+    <div className="overlay">
+      <div className="backrow">
+        <button className="backbtn" onClick={()=>setPhase('preview')}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Trovati {items.length} prodotti</span>
+      </div>
+      <div className="scroll" style={{paddingTop:12}}>
+        <div style={{fontSize:13,color:'#7c876d',fontWeight:500,marginBottom:14}}>
+          Seleziona quelli da aggiungere all'inventario, modifica se necessario.
+        </div>
+        {items.map((p,i)=>(
+          <div className="conf-item" key={i} style={{opacity:p.selected?1:.5}}>
+            {/* riga nome + checkbox */}
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+              <input type="checkbox" className="conf-check" checked={p.selected}
+                onChange={()=>upd(i,'selected',!p.selected)}/>
+              <input className="inp" style={{flex:1,height:42,fontWeight:600}}
+                value={p.nome} onChange={e=>upd(i,'nome',e.target.value)}/>
+            </div>
+            {p.selected&&(
+              <div className="scan-grid">
+                {/* categoria */}
+                <div style={{flex:'1 1 140px'}}>
+                  <div className="flbl">Categoria</div>
+                  <div style={{position:'relative'}}>
+                    <select className="sel" style={{height:38}}
+                      value={p.cat_id} onChange={e=>upd(i,'cat_id',Number(e.target.value))}>
+                      {data.categorie.map(c=><option key={c.id} value={c.id}>{c.nome}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {/* quantità */}
+                <div>
+                  <div className="flbl">Qta</div>
+                  <div style={{display:'flex',alignItems:'center',gap:6,height:38}}>
+                    <button className="stepb" style={{width:32,height:32}}
+                      onClick={()=>upd(i,'qta',Math.max(0.1,parseFloat(p.qta)-1))}><IMinus s={14}c="#fff"/></button>
+                    <span style={{fontWeight:700,minWidth:26,textAlign:'center'}}>{p.qta}</span>
+                    <button className="stepb" style={{width:32,height:32}}
+                      onClick={()=>upd(i,'qta',parseFloat(p.qta)+1)}><IPlus s={14}c="#fff"/></button>
+                  </div>
+                </div>
+                {/* unità */}
+                <div>
+                  <div className="flbl">Unità</div>
+                  <div className="seg" style={{height:38,padding:3,gap:3,width:110}}>
+                    {UNITA.map(u=><button key={u} className={'segb'+(p.unita===u?' on':'')}
+                      style={{height:32,fontSize:13}} onClick={()=>upd(i,'unita',u)}>{u}</button>)}
+                  </div>
+                </div>
+                {/* prezzo */}
+                <div>
+                  <div className="flbl">€ Prezzo</div>
+                  <div style={{position:'relative',width:80}}>
+                    <span style={{position:'absolute',left:9,top:9,color:'#7c876d',fontWeight:600,fontSize:14}}>€</span>
+                    <input className="inp-sm" style={{paddingLeft:22,width:80,height:38}}
+                      value={p.prezzo} onChange={e=>upd(i,'prezzo',e.target.value)}/>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        <div style={{height:8}}/>
+      </div>
+      <div style={{flex:'none',padding:'10px 20px 14px',borderTop:'1px solid #e7ece0'}}>
+        <button className="btnG" disabled={nSel===0} style={{opacity:nSel>0?1:.45}}
+          onClick={save}>
+          Aggiungi {nSel} {nSel===1?'prodotto':'prodotti'} all'inventario
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* ================================================================
    LIVELLO DATI — Supabase
@@ -573,9 +797,10 @@ function SpesaScreen({data,onToggle,onRemove,onQuickAdd}){
 /* ================================================================
    INVENTARIO SCREEN
    ================================================================ */
-function InventarioScreen({data,onAdd,onEdit,onNew}){
+function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
   const [q,setQ]=useState("");
   const [cat,setCat]=useState(null);
+  const [showScanner,setShowScanner]=useState(false);
   const {prodotti,categorie}=data;
   const lista=useMemo(()=>prodotti
     .filter(p=>!cat||p.cat_id===cat)
@@ -586,7 +811,10 @@ function InventarioScreen({data,onAdd,onEdit,onNew}){
       <div className="scroll">
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",paddingTop:6}}>
           <div><div className="lbl">La dispensa di casa</div><div className="h1">Inventario</div></div>
-          <button className="fab" onClick={onNew}><IPlus s={24}c="#fff"/></button>
+          <div style={{display:'flex',gap:10}}>
+            <button className="fab" style={{background:'#3a9b8f'}} onClick={()=>setShowScanner(true)} title="Scontrino AI">🧾</button>
+            <button className="fab" onClick={onNew}><IPlus s={24}c="#fff"/></button>
+          </div>
         </div>
         <div style={{display:"flex",gap:8,margin:"14px 0 6px"}}>
           <div className="swrap">
@@ -616,7 +844,8 @@ function InventarioScreen({data,onAdd,onEdit,onNew}){
             const c=categorie.find(x=>x.id===p.cat_id);
             const esaurito=p.qta<=0;
             return(
-              <div className="card row enter" key={p.id} style={{animationDelay:`${i*22}ms`}} onClick={()=>onEdit(p)}>
+              <SwipeRow key={p.id} onDelete={()=>onDelete&&onDelete(p)}>
+              <div className="card row enter" style={{animationDelay:`${i*22}ms`,margin:0,borderRadius:20}} onClick={()=>onEdit(p)}>
                 <span className="dot" style={{width:40,height:40,background:c?.colore||"#7c876d",fontSize:17}}>
                   {p.nome[0].toUpperCase()}
                 </span>
@@ -639,6 +868,10 @@ function InventarioScreen({data,onAdd,onEdit,onNew}){
         </div>
         <div style={{height:8}}/>
       </div>
+    {showScanner&&<ScontrinoScanner data={data}
+      onClose={()=>setShowScanner(false)}
+      onDone={()=>{setShowScanner(false);onScannerDone&&onScannerDone();}}/>
+    }
     </div>
   );
 }
@@ -1098,7 +1331,11 @@ function App(){
     setData({categorie,membri,supermercati,prodotti,voci,prezzi,corsie});
   },[]);
 
-  useEffect(()=>{load();},[]);
+  useEffect(()=>{
+    load();
+    const id=setInterval(load,30000); // auto-refresh ogni 30s
+    return ()=>clearInterval(id);
+  },[]);
 
   if(!data)return(
     <div className="app" style={{alignItems:"center",justifyContent:"center"}}>
@@ -1109,6 +1346,7 @@ function App(){
   const me=data.membri[0];
 
   const onToggle=async v=>{await db.setPreso(v.id,!v.preso);await load();};
+  const onDeleteProdotto=async p=>{await db.deleteProdotto(p.id);showToast(`"${p.nome}" eliminato`);await load();};
   const onRemove=async v=>{await db.removeVoce(v.id);await load();};
   const onAdd=async p=>{await db.addVoce(p.id,1,me.id);showToast(`"${p.nome}" aggiunto ✓`);await load();};
   const onQuickAdd=async txt=>{

@@ -16,20 +16,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html{background:#f5f8f0}
-body{font-family:'Poppins',system-ui,sans-serif;color:#21281a;
+/* ── Base: catena solida html→body→#root→.app = 100% viewport ── */
+html{width:100%;height:100%;background:#fff}
+body{width:100%;height:100%;height:100dvh;
   margin:0;padding:0;
-  width:100%;height:100vh;height:100dvh;
   overflow:hidden;
   overscroll-behavior:none;
   -webkit-text-size-adjust:100%;
-  background:#f5f8f0;
-  display:flex;justify-content:center;align-items:stretch}
-.app{width:100%;max-width:600px;
-  height:100%;  /* si estende a riempire il body */
+  background:#fff;
+  font-family:'Poppins',system-ui,sans-serif;color:#21281a}
+#root{width:100%;height:100%}
+.app{width:100%;height:100%;
   background:#fff;overflow:hidden;position:relative;
-  display:flex;flex-direction:column;
-  box-shadow:0 0 80px rgba(33,40,26,.08)}
+  display:flex;flex-direction:column}
 /* status bar nativa del SO — nessun chrome falso */
 .safe-top{height:env(safe-area-inset-top,0px);flex:none;background:#fff;z-index:5}
 .body{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}

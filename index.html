@@ -870,7 +870,12 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
                   <button className="addbtn" onClick={e=>{e.stopPropagation();onAdd(p);}}>
                     <IPlus s={17}c="#fff"/>
                   </button>
-                  <button className="del-btn" onClick={e=>{e.stopPropagation();onDelete&&onDelete(p);}}>
+                  <button className="del-btn"
+                    onClick={e=>{
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if(typeof onDelete==='function') onDelete(p);
+                    }}>
                     <ITrash s={14}/>
                   </button>
                 </div>
@@ -1360,8 +1365,19 @@ function App(){
 
   const onToggle=async v=>{await db.setPreso(v.id,!v.preso);await load();};
   const onDeleteProdotto=async p=>{
-    try{await db.deleteProdotto(p.id);showToast(`"${p.nome}" eliminato`);await load();}
-    catch(e){showToast('Errore: '+e.message);}
+    if(!p||p.id===undefined||p.id===null){
+      showToast('Errore: id prodotto mancante');
+      return;
+    }
+    showToast(`Elimino "${p.nome}"…`);
+    try{
+      await db.deleteProdotto(p.id);
+      await load();
+      showToast(`"${p.nome}" eliminato ✓`);
+    }catch(e){
+      showToast('Errore: '+e.message);
+      console.error('deleteProdotto error',e);
+    }
   };
   const onRemove=async v=>{
     try{await db.removeVoce(v.id);await load();}
@@ -1382,7 +1398,7 @@ function App(){
     <div className="app">
       <div className="safe-top"/>
       {screen==="spesa"&&<SpesaScreen data={data} onToggle={onToggle} onRemove={onRemove} onQuickAdd={onQuickAdd}/>}
-      {screen==="inventario"&&<InventarioScreen data={data} onAdd={onAdd} onEdit={p=>setEditing(p)} onNew={()=>setEditing("new")}/>}
+      {screen==="inventario"&&<InventarioScreen data={data} onAdd={onAdd} onEdit={p=>setEditing(p)} onNew={()=>setEditing("new")} onDelete={onDeleteProdotto} onScannerDone={load}/>}
       {screen==="impostazioni"&&<SettingsScreen data={data} onChanged={load}/>}
       <TabBar screen={screen} set={setScreen}/>
       {editing&&(

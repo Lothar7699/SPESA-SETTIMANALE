@@ -2,7 +2,12 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-title" content="La Spesa">
 <title>Lista della Spesa</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -11,20 +16,25 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{font-family:'Poppins',system-ui,sans-serif;
-  background:radial-gradient(900px 500px at 80% -10%,#e6f1dc 0%,transparent 55%),
-  radial-gradient(800px 500px at -10% 110%,#e8efe1 0%,transparent 55%),#f5f8f0;
-  min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 16px;color:#21281a}
-.phone{width:390px;max-width:100%;height:812px;max-height:calc(100vh - 40px);
-  background:#fff;border-radius:46px;overflow:hidden;position:relative;
-  box-shadow:0 2px 0 #fff inset,0 40px 80px -30px rgba(33,40,26,.45),
-  0 0 0 11px #1c211a,0 0 0 13px #2a3324;display:flex;flex-direction:column}
-.status{height:46px;flex:none;display:flex;align-items:center;justify-content:space-between;
-  padding:0 30px;font-size:14px;font-weight:600;position:relative;z-index:5}
-.notch{position:absolute;top:11px;left:50%;transform:translateX(-50%);
-  width:118px;height:30px;background:#1c211a;border-radius:18px;z-index:6}
+html{background:#f5f8f0}
+body{font-family:'Poppins',system-ui,sans-serif;color:#21281a;
+  margin:0;padding:0;
+  height:100vh;height:100dvh;
+  overflow:hidden;
+  overscroll-behavior:none;
+  -webkit-text-size-adjust:100%;
+  background:#f5f8f0;
+  display:flex;justify-content:center}
+.app{width:100%;max-width:600px;
+  height:100vh;height:100dvh;
+  background:#fff;overflow:hidden;position:relative;
+  display:flex;flex-direction:column;
+  /* sottile ombra su desktop quando l'app è più stretta del browser */
+  box-shadow:0 0 80px rgba(33,40,26,.08)}
+/* status bar nativa del SO — nessun chrome falso */
+.safe-top{height:env(safe-area-inset-top,0px);flex:none;background:#fff;z-index:5}
 .body{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
-.scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 20px 14px}
+.scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 20px 14px;-webkit-overflow-scrolling:touch;overscroll-behavior:none}
 .scroll::-webkit-scrollbar{width:0}
 .lbl{font-size:11.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#4f9d2e;margin-bottom:2px}
 .h1{font-size:29px;font-weight:700;letter-spacing:-.02em;line-height:1.05}
@@ -58,7 +68,7 @@ body{font-family:'Poppins',system-ui,sans-serif;
 .addbtn{width:30px;height:30px;border-radius:10px;background:#4f9d2e;color:#fff;border:none;
   display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none;transition:transform .1s}
 .addbtn:active{transform:scale(.85)}
-.tabs{flex:none;display:flex;border-top:1px solid #e7ece0;background:#fff;padding:6px 12px 12px;z-index:5}
+.tabs{flex:none;display:flex;border-top:1px solid #e7ece0;background:#fff;padding:6px 12px max(env(safe-area-inset-bottom,0px),12px);z-index:5}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;
   cursor:pointer;color:#aab39c;font:inherit;font-size:10.5px;font-weight:600;padding:4px 0}
 .tab.on{color:#4f9d2e}
@@ -95,7 +105,7 @@ body{font-family:'Poppins',system-ui,sans-serif;
   display:flex;align-items:center;justify-content:center;color:#21281a}
 .enter{animation:pop .3s cubic-bezier(.22,1,.36,1) both}
 @keyframes pop{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-.toast{position:absolute;left:50%;bottom:88px;transform:translateX(-50%);z-index:40;
+.toast{position:absolute;left:50%;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;
   background:#21281a;color:#fff;font-size:13px;font-weight:500;padding:11px 18px;border-radius:13px;
   box-shadow:0 18px 40px -16px rgba(0,0,0,.6);white-space:nowrap;animation:pop .25s ease both;pointer-events:none}
 .empty{text-align:center;color:#aab39c;font-size:13.5px;font-weight:500;padding:28px 0}
@@ -174,148 +184,96 @@ body{font-family:'Poppins',system-ui,sans-serif;
 <body>
 <div id="root"></div>
 <script type="text/babel">
+
 const {useState,useEffect,useMemo,useRef,useCallback}=React;
 
 /* ================================================================
-   DATI MOCK
+   SUPABASE — configurazione
+   La anon key è la chiave pubblica (client-side safe).
+   RLS controlla i permessi lato server.
    ================================================================ */
-let _seq=200;
-const nid=()=>++_seq;
+const SB   = 'https://fvuwwxwqojtzflcresgc.supabase.co/rest/v1';
+const KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ2dXd3eHdxb2p0emZsY3Jlc2djIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxNTY5MjAsImV4cCI6MjA5NTczMjkyMH0.poGGkUPTapGlT16WebWyjXFXsBiC3IjtLDyDdfkFFaA';
+const H    = { 'apikey': KEY, 'Authorization': `Bearer ${KEY}`, 'Content-Type': 'application/json' };
 
-const MOCK={
-  categorie:[
-    {id:1,nome:"Frutta e verdura",corsia:1,colore:"#5a9e3f"},
-    {id:2,nome:"Panetteria",       corsia:2,colore:"#c7973f"},
-    {id:3,nome:"Latticini",        corsia:3,colore:"#4a7fb5"},
-    {id:4,nome:"Carne e pesce",    corsia:4,colore:"#b5524a"},
-    {id:5,nome:"Dispensa",         corsia:5,colore:"#c2703f"},
-    {id:6,nome:"Bevande",          corsia:6,colore:"#3a9b8f"},
-    {id:7,nome:"Surgelati",        corsia:7,colore:"#5aa6c2"},
-    {id:8,nome:"Pulizia",          corsia:8,colore:"#8a6fb0"},
-    {id:9,nome:"Bagno",            corsia:9,colore:"#c06a92"},
-  ],
-  membri:[
-    {id:1,nome:"Marco",ini:"M",colore:"#4f9d2e"},
-    {id:2,nome:"Anna", ini:"A",colore:"#c2703f"},
-    {id:3,nome:"Luca", ini:"L",colore:"#4a7fb5"},
-    {id:4,nome:"Sara", ini:"S",colore:"#c06a92"},
-  ],
-  supermercati:[
-    {id:1,nome:"Esselunga"},
-    {id:2,nome:"Lidl"},
-    {id:3,nome:"Coop"},
-  ],
-  prodotti:[
-    {id:1,nome:"Latte intero",       cat_id:3,prezzo:1.80,qta:2,unita:"L",  sm_id:1},
-    {id:2,nome:"Banane",             cat_id:1,prezzo:1.50,qta:6,unita:"pz", sm_id:2},
-    {id:3,nome:"Pane integrale",     cat_id:2,prezzo:1.30,qta:0,unita:"pz", sm_id:1},
-    {id:4,nome:"Pomodori ciliegino", cat_id:1,prezzo:2.40,qta:1,unita:"Kg", sm_id:3},
-    {id:5,nome:"Yogurt greco",       cat_id:3,prezzo:0.90,qta:4,unita:"pz", sm_id:1},
-    {id:6,nome:"Pasta penne",        cat_id:5,prezzo:0.95,qta:3,unita:"pz", sm_id:2},
-    {id:7,nome:"Caffè macinato",     cat_id:6,prezzo:3.20,qta:1,unita:"pz", sm_id:1},
-  ],
-  voci:[
-    {id:11,prod_id:2,qta:6,preso:false,mem_id:2},
-    {id:12,prod_id:1,qta:2,preso:false,mem_id:1},
-    {id:13,prod_id:3,qta:1,preso:false,mem_id:3},
-    {id:14,prod_id:4,qta:1,preso:false,mem_id:4},
-    {id:15,prod_id:5,qta:2,preso:false,mem_id:2},
-    {id:16,prod_id:6,qta:2,preso:true, mem_id:1},
-    {id:17,prod_id:7,qta:1,preso:true, mem_id:3},
-  ],
-  prezzi:[
-    {id:1,prod_id:1,sm_id:1,prezzo:1.80},
-    {id:2,prod_id:1,sm_id:2,prezzo:2.10},
-    {id:3,prod_id:1,sm_id:3,prezzo:1.95},
-    {id:4,prod_id:2,sm_id:2,prezzo:1.50},
-    {id:5,prod_id:3,sm_id:1,prezzo:1.30},
-    {id:6,prod_id:6,sm_id:2,prezzo:0.95},
-    {id:7,prod_id:7,sm_id:1,prezzo:3.20},
-    {id:8,prod_id:7,sm_id:3,prezzo:3.50},
-  ],
-  // corsie per supermercato: {sm_id, cat_id, numero}
-  corsie:[
-    // Esselunga (id:1) — stesso ordine default
-    {sm_id:1,cat_id:1,n:1},{sm_id:1,cat_id:2,n:2},{sm_id:1,cat_id:3,n:3},
-    {sm_id:1,cat_id:4,n:4},{sm_id:1,cat_id:5,n:5},{sm_id:1,cat_id:6,n:6},
-    // Lidl (id:2) — ordine diverso
-    {sm_id:2,cat_id:5,n:1},{sm_id:2,cat_id:1,n:2},{sm_id:2,cat_id:3,n:3},
-    {sm_id:2,cat_id:6,n:4},{sm_id:2,cat_id:2,n:5},
-  ],
+/* ── helper REST ─────────────────────────────────────────────── */
+const sbFetch = async (url, opts={}) => {
+  const r = await fetch(url, { headers: H, ...opts, headers: {...H, ...opts.headers} });
+  if (!r.ok) { const t = await r.text(); throw new Error(`Supabase: ${r.status} – ${t}`); }
+  const ct = r.headers.get('content-type')||'';
+  return ct.includes('json') && r.status !== 204 ? r.json() : null;
 };
-
-const cl=x=>JSON.parse(JSON.stringify(x));
-const w=()=>new Promise(r=>setTimeout(r,80));
+const sbGet = (q)     => sbFetch(`${SB}/${q}`);
+const sbPost = (t,b)  => sbFetch(`${SB}/${t}`, {
+  method:'POST', headers:{'Prefer':'return=representation'}, body:JSON.stringify(b)
+}).then(r=>Array.isArray(r)?r[0]:r);
+const sbPatch = (t,f,b) => sbFetch(`${SB}/${t}?${f}`, {
+  method:'PATCH', headers:{'Prefer':'return=representation'}, body:JSON.stringify(b)
+}).then(r=>Array.isArray(r)?r:r);
+const sbDel  = (t,f)  => sbFetch(`${SB}/${t}?${f}`, {method:'DELETE'});
+const sbUpsert = (t,b,oc) => sbFetch(`${SB}/${t}?on_conflict=${oc}`, {
+  method:'POST',
+  headers:{'Prefer':'resolution=merge-duplicates,return=representation'},
+  body:JSON.stringify(Array.isArray(b)?b:[b])
+}).then(r=>Array.isArray(r)?r[0]:r);
 
 /* ================================================================
-   LIVELLO DATI — MOCK (→ Supabase: vedi commenti)
+   LIVELLO DATI — Supabase
    ================================================================ */
-const db={
-  async getCategorie(){await w();return cl(MOCK.categorie).sort((a,b)=>a.corsia-b.corsia);},
-  async getMembri()  {await w();return cl(MOCK.membri);},
-  async getSM()      {await w();return cl(MOCK.supermercati);},
-  async getProdotti(){await w();return cl(MOCK.prodotti).sort((a,b)=>a.nome.localeCompare(b.nome));},
-  async getVoci()    {await w();return cl(MOCK.voci);},
-  async getPrezzi()  {await w();return cl(MOCK.prezzi);},
-  async getCorsie()  {await w();return cl(MOCK.corsie);},
+const db = {
+  getCategorie: ()  => sbGet('categorie?select=*&order=corsia'),
+  getMembri:    ()  => sbGet('membri?select=*'),
+  getSM:        ()  => sbGet('supermercati?select=*'),
+  getProdotti:  ()  => sbGet('prodotti?select=*&order=nome'),
+  getVoci:      ()  => sbGet('voci?select=*'),
+  getPrezzi:    ()  => sbGet('prezzi?select=*'),
+  getCorsie:    ()  => sbGet('corsie?select=*'),
 
-  async upsertProdotto(p){
-    // SUPABASE: return (await sb.from("prodotti").upsert(p).select().single()).data
-    await w();
-    if(p.id){const i=MOCK.prodotti.findIndex(x=>x.id===p.id);MOCK.prodotti[i]={...MOCK.prodotti[i],...p};return cl(MOCK.prodotti[i]);}
-    const n={...p,id:nid()};MOCK.prodotti.push(n);return cl(n);
+  async upsertProdotto(p) {
+    const {id,...rest}=p;
+    if (id) return sbPatch('prodotti',`id=eq.${id}`,rest).then(r=>r[0]||r);
+    return sbPost('prodotti', rest);
   },
-  async upsertPrezzo(prod_id,sm_id,prezzo){
-    // SUPABASE: await sb.from("prezzi_storico").upsert({prod_id,sm_id,prezzo},{onConflict:"prod_id,sm_id"})
-    await w();
-    const i=MOCK.prezzi.findIndex(x=>x.prod_id===prod_id&&x.sm_id===sm_id);
-    if(i>=0)MOCK.prezzi[i].prezzo=prezzo;
-    else MOCK.prezzi.push({id:nid(),prod_id,sm_id,prezzo});
-    // aggiorna prezzo minimo sul prodotto
-    const ps=MOCK.prezzi.filter(x=>x.prod_id===prod_id&&x.prezzo>0);
-    if(ps.length){
-      const min=ps.reduce((m,x)=>x.prezzo<m.prezzo?x:m,ps[0]);
-      const p=MOCK.prodotti.find(x=>x.id===prod_id);
-      if(p){p.prezzo=min.prezzo;p.sm_id=min.sm_id;}
+
+  async upsertPrezzo(prod_id, sm_id, prezzo) {
+    // Il trigger SQL sync_prezzo_minimo aggiorna prodotti.prezzo in automatico
+    await sbUpsert('prezzi', {prod_id,sm_id,prezzo}, 'prod_id,sm_id');
+  },
+
+  async upsertCorsia(sm_id, cat_id, n) {
+    await sbUpsert('corsie', {sm_id,cat_id,n}, 'sm_id,cat_id');
+  },
+
+  async addVoce(prod_id, qta, mem_id) {
+    const existing = await sbGet(`voci?prod_id=eq.${prod_id}&preso=eq.false&select=*`);
+    if (existing?.length > 0) {
+      const v = existing[0];
+      return sbPatch('voci',`id=eq.${v.id}`,{qta: v.qta + qta}).then(r=>r[0]||r);
     }
+    return sbPost('voci', {prod_id, qta, preso:false, mem_id});
   },
-  async upsertCorsia(sm_id,cat_id,n){
-    // SUPABASE: await sb.from("corsie").upsert({sm_id,cat_id,n},{onConflict:"sm_id,cat_id"})
-    await w();
-    const i=MOCK.corsie.findIndex(x=>x.sm_id===sm_id&&x.cat_id===cat_id);
-    if(i>=0)MOCK.corsie[i].n=n;else MOCK.corsie.push({sm_id,cat_id,n});
+
+  setPreso:        (id,preso) => sbPatch('voci',`id=eq.${id}`,{preso}),
+  removeVoce:      (id)       => sbDel('voci',`id=eq.${id}`),
+  addSM:           (nome)     => sbPost('supermercati',{nome}),
+  removeSM:        (id)       => sbDel('supermercati',`id=eq.${id}`),
+  addMembro:       (nome,ini,colore) => sbPost('membri',{nome,ini,colore}),
+  removeMembro:    (id)       => sbDel('membri',`id=eq.${id}`),
+  removeCategoria: (id)       => sbDel('categorie',`id=eq.${id}`),
+
+  async addCategoria(nome, colore) {
+    const cats = await sbGet('categorie?select=corsia&order=corsia.desc&limit=1');
+    const corsia = cats?.length > 0 ? cats[0].corsia + 1 : 1;
+    return sbPost('categorie',{nome,colore,corsia});
   },
-  async addVoce(prod_id,qta,mem_id){
-    await w();
-    const e=MOCK.voci.find(v=>v.prod_id===prod_id&&!v.preso);
-    if(e){e.qta+=qta;return cl(e);}
-    const v={id:nid(),prod_id,qta,preso:false,mem_id};MOCK.voci.push(v);return cl(v);
-  },
-  async setPreso(id,preso){await w();const v=MOCK.voci.find(x=>x.id===id);if(v)v.preso=preso;},
-  async removeVoce(id){await w();MOCK.voci=MOCK.voci.filter(x=>x.id!==id);},
-  async addSM(nome){
-    // SUPABASE: return (await sb.from("supermercati").insert({nome}).select().single()).data
-    await w();const n={id:nid(),nome};MOCK.supermercati.push(n);return cl(n);
-  },
-  async removeSM(id){await w();MOCK.supermercati=MOCK.supermercati.filter(x=>x.id!==id);},
-  async addMembro(nome,ini,colore){
-    await w();const n={id:nid(),nome,ini,colore};MOCK.membri.push(n);return cl(n);
-  },
-  async removeMembro(id){await w();MOCK.membri=MOCK.membri.filter(x=>x.id!==id);},
-  async addCategoria(nome,colore){
-    await w();
-    const corsia=Math.max(...MOCK.categorie.map(c=>c.corsia),0)+1;
-    const n={id:nid(),nome,corsia,colore};MOCK.categorie.push(n);return cl(n);
-  },
-  async removeCategoria(id){await w();MOCK.categorie=MOCK.categorie.filter(x=>x.id!==id);},
-  async moveCategoria(id,dir){
-    await w();
-    const cats=cl(MOCK.categorie).sort((a,b)=>a.corsia-b.corsia);
-    const i=cats.findIndex(c=>c.id===id);
-    const j=i+dir;if(j<0||j>=cats.length)return;
-    const a=MOCK.categorie.find(x=>x.id===cats[i].id);
-    const b=MOCK.categorie.find(x=>x.id===cats[j].id);
-    if(a&&b){[a.corsia,b.corsia]=[b.corsia,a.corsia];}
+
+  async moveCategoria(id, dir) {
+    const cats = await sbGet('categorie?select=*&order=corsia');
+    const i = cats.findIndex(c=>c.id===id);
+    const j = i + dir;
+    if (j < 0 || j >= cats.length) return;
+    await sbPatch('categorie',`id=eq.${cats[i].id}`,{corsia:cats[j].corsia});
+    await sbPatch('categorie',`id=eq.${cats[j].id}`,{corsia:cats[i].corsia});
   },
 };
 
@@ -1145,7 +1103,7 @@ function App(){
   useEffect(()=>{load();},[]);
 
   if(!data)return(
-    <div className="phone" style={{alignItems:"center",justifyContent:"center"}}>
+    <div className="app" style={{alignItems:"center",justifyContent:"center"}}>
       <span style={{color:"#7c876d",fontWeight:600}}>Carico…</span>
     </div>
   );
@@ -1166,12 +1124,8 @@ function App(){
   };
 
   return(
-    <div className="phone">
-      <div className="status">
-        <div className="notch"/>
-        <span>9:41</span>
-        <span style={{fontWeight:700,fontSize:12}}>5G ▮▮▮</span>
-      </div>
+    <div className="app">
+      <div className="safe-top"/>
       {screen==="spesa"&&<SpesaScreen data={data} onToggle={onToggle} onRemove={onRemove} onQuickAdd={onQuickAdd}/>}
       {screen==="inventario"&&<InventarioScreen data={data} onAdd={onAdd} onEdit={p=>setEditing(p)} onNew={()=>setEditing("new")}/>}
       {screen==="impostazioni"&&<SettingsScreen data={data} onChanged={load}/>}

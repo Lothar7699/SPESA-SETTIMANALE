@@ -201,6 +201,22 @@ input, select, textarea {
 .del-btn{width:28px;height:28px;border-radius:9px;background:#fef2f2;border:none;cursor:pointer;
   display:flex;align-items:center;justify-content:center;color:#dc2626;flex:none;transition:background .15s}
 .del-btn:active{background:#fee2e2}
+
+/* QuickAdd autocomplete */
+.qa-drop{position:absolute;bottom:calc(100% + 6px);left:0;right:0;background:#fff;
+  border:1px solid #e7ece0;border-radius:18px;
+  box-shadow:0 -8px 32px rgba(33,40,26,.14);
+  max-height:260px;overflow-y:auto;z-index:30}
+.qa-item{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;
+  border-bottom:1px solid #f5f8f0;transition:background .1s}
+.qa-item:last-child{border-bottom:none}
+.qa-item:active{background:#f9fbf7}
+.qa-new{background:#f5fbf0}
+/* Pallino rosso soglia */
+.dot-red{display:inline-block;width:8px;height:8px;border-radius:50%;
+  background:#dc2626;margin-left:6px;vertical-align:middle;flex:none}
+/* Data aggiornamento */
+.ts{font-size:10.5px;color:#aab39c;font-weight:500;margin-top:2px}
 </style>
 </head>
 <body>
@@ -505,6 +521,8 @@ const db = {
     await sbPatch('categorie',`id=eq.${cats[i].id}`,{corsia:cats[j].corsia});
     await sbPatch('categorie',`id=eq.${cats[j].id}`,{corsia:cats[i].corsia});
   },
+  addMovimento:(prod_id,delta,qta_dopo,nota='')=>sbPost('movimenti',{prod_id,delta,qta_dopo,nota}),
+  getMovimenti:(prod_id)=>sbGet(`movimenti?prod_id=eq.${prod_id}&order=data.desc&limit=12&select=delta,qta_dopo,data`),
 };
 
 /* ================================================================
@@ -514,6 +532,15 @@ const GIORNI=["Domenica","Lunedì","Martedì","Mercoledì","Giovedì","Venerdì"
 const MESI=["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
 const oggi=()=>{const d=new Date();return`${GIORNI[d.getDay()]} ${d.getDate()} ${MESI[d.getMonth()]}`;};
 const eur=n=>"€ "+Number(n||0).toFixed(2).replace(".",",");
+const ggfa=ts=>{
+  if(!ts)return '';
+  const d=Math.floor((Date.now()-new Date(ts).getTime())/86400000);
+  if(d===0)return 'oggi';
+  if(d===1)return 'ieri';
+  if(d<7)return `${d} gg fa`;
+  if(d<30)return `${Math.floor(d/7)} sett. fa`;
+  return new Date(ts).toLocaleDateString('it-IT');
+};
 const UNITA=["Kg","L","pz"];
 const COLORS=["#4f9d2e","#3a9b8f","#4a7fb5","#8a6fb0","#c06a92","#b5524a","#c2703f","#c7973f","#5aa6c2","#5a9e3f","#7b68ee","#e07b54"];
 
@@ -656,11 +683,94 @@ function FilterSheet({open,onClose,data,filters,setFilters}){
   );
 }
 
+
+/* ================================================================
+   QUICKADD — barra aggiunta rapida con ricerca dall'inventario
+   ================================================================ */
+function QuickAdd({data, onAddExisting, onCreateNew}) {
+  const [txt,setTxt]=useState('');
+  const [open,setOpen]=useState(false);
+
+  const sugg=useMemo(()=>{
+    if(!txt.trim())return[];
+    const q=txt.toLowerCase();
+    return(data.prodotti||[]).filter(p=>p.nome.toLowerCase().includes(q)).slice(0,6);
+  },[txt,data.prodotti]);
+
+  const exact=(data.prodotti||[]).find(p=>p.nome.toLowerCase()===txt.toLowerCase().trim());
+
+  const addP=p=>{onAddExisting(p);setTxt('');setOpen(false);};
+  const createP=()=>{if(txt.trim()){onCreateNew(txt.trim());setTxt('');setOpen(false);}};
+
+  const handleAction=()=>{
+    if(exact) addP(exact);
+    else if(sugg.length===1) addP(sugg[0]);
+    else if(txt.trim()) createP();
+  };
+
+  return(
+    <div className="quick" style={{position:'relative'}}>
+      {/* dropdown suggerimenti */}
+      {open&&txt.trim()&&(
+        <div className="qa-drop">
+          {sugg.map(p=>{
+            const c=data.categorie.find(x=>x.id==p.cat_id);
+            return(
+              <div key={p.id} className="qa-item"
+                onMouseDown={e=>{e.preventDefault();addP(p);}}>
+                <span className="dot" style={{width:34,height:34,fontSize:15,borderRadius:11,
+                  background:c?.colore||'#aab39c',flex:'none'}}>
+                  {p.nome[0].toUpperCase()}
+                </span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:14.5}}>{p.nome}</div>
+                  <div style={{fontSize:12,color:'#7c876d'}}>{c?.nome}{p.qta>0?` · ${p.qta} ${p.unita} in casa`:' · esaurito'}</div>
+                </div>
+                {p.soglia_minima>0&&Number(p.qta)<=Number(p.soglia_minima)&&<span className="dot-red"/>}
+              </div>
+            );
+          })}
+          {!exact&&txt.trim()&&(
+            <div className="qa-item qa-new"
+              onMouseDown={e=>{e.preventDefault();createP();}}>
+              <span style={{width:34,height:34,borderRadius:11,background:'#4f9d2e',
+                color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flex:'none',fontSize:22,fontWeight:700}}>+</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:14.5}}>Crea "{txt}"</div>
+                <div style={{fontSize:12,color:'#7c876d'}}>Nuovo prodotto nell'inventario</div>
+              </div>
+            </div>
+          )}
+          {sugg.length===0&&exact===undefined&&(
+            <div className="qa-item qa-new"
+              onMouseDown={e=>{e.preventDefault();createP();}}>
+              <span style={{width:34,height:34,borderRadius:11,background:'#4f9d2e',
+                color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',flex:'none',fontSize:22,fontWeight:700}}>+</span>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:14.5}}>Crea "{txt}"</div>
+                <div style={{fontSize:12,color:'#7c876d'}}>Nuovo prodotto nell'inventario</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <button className="fab" onClick={handleAction}><IPlus s={24}c="#fff"/></button>
+      <div className="swrap">
+        <span className="sico"><ISrc s={17}/></span>
+        <input className="inp" placeholder="Cerca nell'inventario…" value={txt}
+          onChange={e=>{setTxt(e.target.value);setOpen(true);}}
+          onKeyDown={e=>e.key==='Enter'&&handleAction()}
+          onFocus={()=>setOpen(true)}
+          onBlur={()=>setTimeout(()=>setOpen(false),200)}/>
+      </div>
+    </div>
+  );
+}
+
 /* ================================================================
    SPESA SCREEN
    ================================================================ */
-function SpesaScreen({data,onToggle,onRemove,onQuickAdd}){
-  const [txt,setTxt]=useState("");
+function SpesaScreen({data,onToggle,onRemove,onAddExisting,onCreateNew}){
   const [showFilter,setShowFilter]=useState(false);
   const [filters,setFilters]=useState({sm:null,cat:null});
   const {voci,prodotti,categorie,membri,supermercati,corsie}=data;
@@ -791,14 +901,7 @@ function SpesaScreen({data,onToggle,onRemove,onQuickAdd}){
         )}
         <div style={{height:6}}/>
       </div>
-      <div className="quick">
-        <button className="fab" onClick={send}><IPlus s={24}c="#fff"/></button>
-        <div className="swrap">
-          <span className="sico"><ISrc s={17}/></span>
-          <input className="inp" placeholder="Aggiungi un prodotto…" value={txt}
-            onChange={e=>setTxt(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}/>
-        </div>
-      </div>
+      <QuickAdd data={data} onAddExisting={onAddExisting} onCreateNew={onCreateNew}/>
     </div>
   );
 }
@@ -812,7 +915,7 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
   const [showScanner,setShowScanner]=useState(false);
   const {prodotti,categorie}=data;
   const lista=useMemo(()=>prodotti
-    .filter(p=>!cat||p.cat_id===cat)
+    .filter(p=>!cat||p.cat_id==cat)
     .filter(p=>p.nome.toLowerCase().includes(q.toLowerCase()))
   ,[prodotti,q,cat]);
   return(
@@ -858,13 +961,17 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
                   {p.nome[0].toUpperCase()}
                 </span>
                 <div style={{flex:1,minWidth:0}}>
-                  <div className="pname">{p.nome}</div>
+                  <div className="pname">
+                    {p.nome}
+                    {p.soglia_minima>0&&Number(p.qta)<=Number(p.soglia_minima)&&<span className="dot-red" title="Sotto soglia minima"/>}
+                  </div>
                   <div className="pmeta" style={{display:"flex",alignItems:"center",gap:5}}>
                     {c?.nome}
                     {esaurito
                       ?<span style={{color:"#b5524a",fontWeight:600,display:"inline-flex",alignItems:"center",gap:3}}>· <IAlert/> Esaurito</span>
                       :<span>· {p.qta} {p.unita}</span>}
                   </div>
+                  {p.updated_at&&<div className="ts">agg. {ggfa(p.updated_at)}</div>}
                 </div>
                 <div style={{display:"flex",gap:6,alignItems:"center"}}>
                   <button className="addbtn" onClick={e=>{e.stopPropagation();onAdd(p);}}>
@@ -905,6 +1012,7 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
   const [qta,setQta]=useState(prodotto?.qta??1);
   const [unita,setUnita]=useState(prodotto?.unita||"pz");
   const [memId,setMemId]=useState(data.membri[0]?.id);
+  const [soglia,setSoglia]=useState(prodotto?.soglia_minima??'');
   // prezzi per supermercato
   const [prezziSM,setPrezziSM]=useState({});
   useEffect(()=>{
@@ -919,7 +1027,8 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
   const ok=nome.trim().length>0;
   const build=()=>({id:prodotto?.id,nome:nome.trim(),cat_id:catId,
     prezzo:parseFloat(String(prezzo).replace(",","."))||0,
-    qta:Number(qta),unita,sm_id:prodotto?.sm_id||null});
+    qta:Number(qta),unita,sm_id:prodotto?.sm_id||null,
+    soglia_minima:parseFloat(String(soglia).replace(",","."))||0});
   const savePrezzi=async(pid)=>{
     for(const[sid,val]of Object.entries(prezziSM)){
       const n=parseFloat(String(val).replace(",","."));
@@ -994,6 +1103,15 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
             </div>
           ))}
         </>)}
+        <div className="flbl" style={{marginTop:18}}>Soglia minima giacenza</div>
+        <div style={{position:"relative"}}>
+          <input className="inp" style={{height:50,fontSize:16,fontWeight:600}}
+            inputMode="decimal" value={soglia} onChange={e=>setSoglia(e.target.value)}
+            placeholder="es. 2 — mostra 🔴 quando scende sotto"/>
+        </div>
+        <div style={{fontSize:12,color:"#7c876d",margin:"4px 2px 0",lineHeight:1.5}}>
+          Lascia 0 per disattivare.
+        </div>
         <div className="flbl" style={{marginTop:18}}>Aggiunto da</div>
         <div style={{display:"flex",gap:12}}>
           {data.membri.map(m=>(
@@ -1383,11 +1501,14 @@ function App(){
     try{await db.removeVoce(v.id);await load();}
     catch(e){showToast('Errore: '+e.message);}
   };
-  const onAdd=async p=>{await db.addVoce(p.id,1,me.id);showToast(`"${p.nome}" aggiunto ✓`);await load();};
-  const onQuickAdd=async txt=>{
-    let p=data.prodotti.find(x=>x.nome.toLowerCase()===txt.toLowerCase());
-    if(!p)p=await db.upsertProdotto({nome:txt,cat_id:5,prezzo:0,qta:0,unita:"pz",sm_id:null});
-    await db.addVoce(p.id,1,me.id);await load();
+  const onAdd=async p=>{
+    await db.addVoce(p.id,1,me.id);
+    showToast(`"${p.nome}" aggiunto ✓`);
+    await load();
+  };
+  const onCreateNew=nome=>{
+    setEditing({nome,qta:0,unita:"pz",prezzo:0,
+      cat_id:data.categorie[0]?.id,sm_id:null,soglia_minima:0});
   };
   const onModificaDone=async goToList=>{
     showToast(goToList?"Aggiunto alla spesa ✓":"Salvato nell'inventario ✓");
@@ -1397,7 +1518,7 @@ function App(){
   return(
     <div className="app">
       <div className="safe-top"/>
-      {screen==="spesa"&&<SpesaScreen data={data} onToggle={onToggle} onRemove={onRemove} onQuickAdd={onQuickAdd}/>}
+      {screen==="spesa"&&<SpesaScreen data={data} onToggle={onToggle} onRemove={onRemove} onAddExisting={onAdd} onCreateNew={onCreateNew}/>}
       {screen==="inventario"&&<InventarioScreen data={data} onAdd={onAdd} onEdit={p=>setEditing(p)} onNew={()=>setEditing("new")} onDelete={onDeleteProdotto} onScannerDone={load}/>}
       {screen==="impostazioni"&&<SettingsScreen data={data} onChanged={load}/>}
       <TabBar screen={screen} set={setScreen}/>

@@ -215,7 +215,7 @@ const H    = { 'apikey': KEY, 'Authorization': `Bearer ${KEY}`, 'Content-Type': 
 
 /* ── helper REST ─────────────────────────────────────────────── */
 const sbFetch = async (url, opts={}) => {
-  const r = await fetch(url, { headers: H, ...opts, headers: {...H, ...opts.headers} });
+  const r = await fetch(url, { ...opts, headers: {...H, ...(opts.headers||{})} });
   if (!r.ok) { const t = await r.text(); throw new Error(`Supabase: ${r.status} – ${t}`); }
   const ct = r.headers.get('content-type')||'';
   return ct.includes('json') && r.status !== 204 ? r.json() : null;
@@ -862,6 +862,7 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
                   <IPlus s={17}c="#fff"/>
                 </button>
               </div>
+              </SwipeRow>
             );
           })}
           {lista.length===0&&<div className="empty">Nessun prodotto trovato</div>}

@@ -489,6 +489,7 @@ const db = {
   addMembro:       (nome,ini,colore) => sbPost('membri',{nome,ini,colore}),
   removeMembro:    (id)       => sbDel('membri',`id=eq.${id}`),
   removeCategoria: (id)       => sbDel('categorie',`id=eq.${id}`),
+  deleteProdotto:   (id)       => sbDel('prodotti', `id=eq.${id}`),
 
   async addCategoria(nome, colore) {
     const cats = await sbGet('categorie?select=corsia&order=corsia.desc&limit=1');
@@ -1358,8 +1359,14 @@ function App(){
   const me=data.membri[0];
 
   const onToggle=async v=>{await db.setPreso(v.id,!v.preso);await load();};
-  const onDeleteProdotto=async p=>{await db.deleteProdotto(p.id);showToast(`"${p.nome}" eliminato`);await load();};
-  const onRemove=async v=>{await db.removeVoce(v.id);await load();};
+  const onDeleteProdotto=async p=>{
+    try{await db.deleteProdotto(p.id);showToast(`"${p.nome}" eliminato`);await load();}
+    catch(e){showToast('Errore: '+e.message);}
+  };
+  const onRemove=async v=>{
+    try{await db.removeVoce(v.id);await load();}
+    catch(e){showToast('Errore: '+e.message);}
+  };
   const onAdd=async p=>{await db.addVoce(p.id,1,me.id);showToast(`"${p.nome}" aggiunto ✓`);await load();};
   const onQuickAdd=async txt=>{
     let p=data.prodotti.find(x=>x.nome.toLowerCase()===txt.toLowerCase());

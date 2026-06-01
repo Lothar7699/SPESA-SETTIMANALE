@@ -217,6 +217,21 @@ input, select, textarea {
   background:#dc2626;margin-left:6px;vertical-align:middle;flex:none}
 /* Data aggiornamento */
 .ts{font-size:10.5px;color:#aab39c;font-weight:500;margin-top:2px}
+
+/* Modal conferma */
+.modal-bg{position:fixed;inset:0;background:rgba(33,40,26,.5);z-index:50;display:flex;align-items:flex-end}
+.modal{background:#fff;border-radius:28px 28px 0 0;padding:28px 24px max(24px,env(safe-area-inset-bottom));width:100%}
+.modal-title{font-size:20px;font-weight:700;margin-bottom:8px}
+.modal-body{font-size:14.5px;color:#7c876d;line-height:1.55;margin-bottom:22px}
+.btn-red{width:100%;height:52px;border-radius:16px;background:#dc2626;color:#fff;border:none;
+  font:inherit;font-size:16px;font-weight:600;cursor:pointer;transition:transform .12s}
+.btn-red:active{transform:scale(.98)}
+/* Badge scanner */
+.badge-new{padding:3px 8px;border-radius:7px;font-size:11px;font-weight:700;background:#eaf4e3;color:#3a7a1f}
+.badge-upd{padding:3px 8px;border-radius:7px;font-size:11px;font-weight:700;background:#fff7e6;color:#c2703f}
+/* Stepv input */
+.stepv-input{flex:1;text-align:center;font-size:16px;font-weight:700;background:transparent;
+  border:none;outline:none;width:100%;min-width:0}
 </style>
 </head>
 <body>
@@ -262,23 +277,30 @@ const sbUpsert = (t,b,oc) => sbFetch(`${SB}/${t}?on_conflict=${oc}`, {
 const FN_URL = 'https://fvuwwxwqojtzflcresgc.supabase.co/functions/v1/analyze-receipt';
 
 function ScontrinoScanner({data, onClose, onDone}) {
-  const [phase,setPhase]=useState('select'); // select|preview|analyzing|confirm|error
+  const [phase,setPhase]=useState('select');
   const [imgSrc,setImgSrc]=useState(null);
   const [imgB64,setImgB64]=useState(null);
   const [mtype,setMtype]=useState('image/jpeg');
   const [items,setItems]=useState([]);
   const [errMsg,setErrMsg]=useState('');
+  const [smId,setSmId]=useState(()=>data.supermercati[0]?.id||null);
   const fileRef=useRef(null);
 
+  const matchProdotto=nome=>{
+    const q=nome.toLowerCase().trim();
+    return data.prodotti.find(p=>
+      p.nome.toLowerCase()===q||
+      p.nome.toLowerCase().includes(q)||
+      q.includes(p.nome.toLowerCase().split(' ')[0])
+    )||null;
+  };
+
   const onFile=e=>{
-    const f=e.target.files[0]; if(!f)return;
-    setImgSrc(URL.createObjectURL(f));
-    setMtype(f.type||'image/jpeg');
+    const f=e.target.files[0];if(!f)return;
+    setImgSrc(URL.createObjectURL(f));setMtype(f.type||'image/jpeg');
     const r=new FileReader();
     r.onload=()=>setImgB64(r.result.split(',')[1]);
-    r.readAsDataURL(f);
-    setPhase('preview');
-    e.target.value=''; // reset so same file can be reselected
+    r.readAsDataURL(f);setPhase('preview');e.target.value='';
   };
 
   const analyze=async()=>{
@@ -291,20 +313,16 @@ function ScontrinoScanner({data, onClose, onDone}) {
       });
       const json=await resp.json();
       if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
-      const enriched=(json.products||[]).map((p,i)=>({
-        ...p, i,
-        cat_id: data.categorie.find(c=>c.nome===p.cat_nome)?.id
-             || data.categorie.find(c=>c.nome==='Dispensa')?.id
-             || data.categorie[0]?.id,
-        selected:true,
-      }));
+      const enriched=(json.products||[]).map((p,i)=>{
+        const match=matchProdotto(p.nome);
+        return{...p,i,
+          cat_id:match?.cat_id||data.categorie.find(c=>c.nome===p.cat_nome)?.id||data.categorie.find(c=>c.nome==='Dispensa')?.id||data.categorie[0]?.id,
+          selected:true,match};
+      });
       setItems(enriched);
       setPhase(enriched.length>0?'confirm':'error');
       if(enriched.length===0)setErrMsg('Nessun prodotto rilevato. Prova con una foto più nitida.');
-    }catch(err){
-      setErrMsg(err.message||'Errore sconosciuto');
-      setPhase('error');
-    }
+    }catch(err){setErrMsg(err.message||'Errore');setPhase('error');}
   };
 
   const upd=(i,field,val)=>setItems(prev=>prev.map((p,j)=>j===i?{...p,[field]:val}:p));
@@ -312,138 +330,129 @@ function ScontrinoScanner({data, onClose, onDone}) {
   const save=async()=>{
     setPhase('analyzing');
     for(const p of items.filter(p=>p.selected)){
-      await db.upsertProdotto({
-        nome:p.nome, cat_id:p.cat_id,
-        prezzo:parseFloat(String(p.prezzo).replace(',','.'))||0,
-        qta:parseFloat(p.qta)||1, unita:p.unita||'pz', sm_id:null,
-      });
+      const prezzo=parseFloat(String(p.prezzo).replace(',','.'))||0;
+      let prodId;
+      if(p.match){
+        prodId=p.match.id;
+        if(prezzo>0)await sbPatch('prodotti',`id=eq.${prodId}`,{prezzo});
+      }else{
+        const saved=await db.upsertProdotto({nome:p.nome,cat_id:p.cat_id,prezzo,qta:parseFloat(p.qta)||1,unita:p.unita||'pz',sm_id:smId||null});
+        prodId=saved?.id;
+      }
+      if(smId&&prodId&&prezzo>0)await db.upsertPrezzo(prodId,smId,prezzo);
     }
     onDone();
   };
 
-  const nSel=items.filter(p=>p.selected).length;
-
-  /* ── phase: select ── */
-  if(phase==='select') return(
+  if(phase==='select')return(
     <div className="overlay">
-      <div className="backrow">
-        <button className="backbtn" onClick={onClose}><ILeft/></button>
-        <span style={{fontSize:19,fontWeight:700}}>Scontrino</span>
-      </div>
+      <div className="backrow"><button className="backbtn" onClick={onClose}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Scontrino</span></div>
       <div className="scan-phase">
         <div style={{fontSize:64,lineHeight:1}}>🧾</div>
         <div className="scan-h">Fotografa lo scontrino</div>
-        <div className="scan-sub">L'AI rileverà automaticamente i prodotti e li aggiungerà all'inventario dopo la tua conferma</div>
+        <div className="scan-sub">L'AI rileva i prodotti, aggiorna prezzi e inventario dopo la tua conferma</div>
         <button className="btnG" style={{width:'100%',marginTop:8}} onClick={()=>fileRef.current.click()}>
           <ICam s={20}c="#fff"/> Apri fotocamera / Libreria
         </button>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment"
-          style={{display:'none'}} onChange={onFile}/>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={onFile}/>
       </div>
     </div>
   );
 
-  /* ── phase: preview ── */
-  if(phase==='preview') return(
+  if(phase==='preview')return(
     <div className="overlay">
-      <div className="backrow">
-        <button className="backbtn" onClick={()=>setPhase('select')}><ILeft/></button>
-        <span style={{fontSize:19,fontWeight:700}}>Anteprima</span>
-      </div>
+      <div className="backrow"><button className="backbtn" onClick={()=>setPhase('select')}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Anteprima</span></div>
       <div className="scroll" style={{paddingTop:16}}>
         <img src={imgSrc} alt="scontrino" className="scan-img"/>
         <button className="btnG" onClick={analyze}><ISrc s={18}c="#fff"/> Analizza scontrino</button>
-        <button className="btnT" onClick={()=>{ setPhase('select'); setImgSrc(null); }}>
-          Scegli un'altra foto
-        </button>
+        <button className="btnT" onClick={()=>{setPhase('select');setImgSrc(null);}}>Scegli un'altra foto</button>
       </div>
     </div>
   );
 
-  /* ── phase: analyzing ── */
-  if(phase==='analyzing') return(
+  if(phase==='analyzing')return(
     <div className="overlay" style={{alignItems:'center',justifyContent:'center'}}>
       <div className="spinner"/>
       <div style={{fontWeight:700,fontSize:18,marginTop:20}}>Analizzo lo scontrino…</div>
-      <div style={{color:'#7c876d',fontSize:14,marginTop:8}}>L'AI sta rilevando i prodotti</div>
+      <div style={{color:'#7c876d',fontSize:14,marginTop:8}}>Claude Haiku sta leggendo i prodotti</div>
     </div>
   );
 
-  /* ── phase: error ── */
-  if(phase==='error') return(
+  if(phase==='error')return(
     <div className="overlay">
-      <div className="backrow">
-        <button className="backbtn" onClick={onClose}><ILeft/></button>
-        <span style={{fontSize:19,fontWeight:700}}>Errore</span>
-      </div>
+      <div className="backrow"><button className="backbtn" onClick={onClose}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Errore</span></div>
       <div className="scan-phase">
         <div style={{fontSize:56}}>😕</div>
         <div className="scan-h">Analisi non riuscita</div>
-        <div className="scan-sub">{errMsg||'Controlla che la chiave ANTHROPIC_API_KEY sia configurata in Supabase → Settings → Edge Functions → Secrets'}</div>
+        <div className="scan-sub">{errMsg||'Controlla ANTHROPIC_API_KEY in Supabase → Edge Functions → Secrets'}</div>
         <button className="btnG" style={{width:'100%'}} onClick={()=>setPhase('preview')}>Riprova</button>
         <button className="btnT" onClick={onClose}>Chiudi</button>
       </div>
     </div>
   );
 
-  /* ── phase: confirm ── */
+  const nSel=items.filter(p=>p.selected).length;
+  const nNew=items.filter(p=>p.selected&&!p.match).length;
+  const nUpd=items.filter(p=>p.selected&&p.match).length;
   return(
     <div className="overlay">
-      <div className="backrow">
-        <button className="backbtn" onClick={()=>setPhase('preview')}><ILeft/></button>
-        <span style={{fontSize:19,fontWeight:700}}>Trovati {items.length} prodotti</span>
-      </div>
+      <div className="backrow"><button className="backbtn" onClick={()=>setPhase('preview')}><ILeft/></button>
+        <span style={{fontSize:19,fontWeight:700}}>Trovati {items.length} prodotti</span></div>
       <div className="scroll" style={{paddingTop:12}}>
-        <div style={{fontSize:13,color:'#7c876d',fontWeight:500,marginBottom:14}}>
-          Seleziona quelli da aggiungere all'inventario, modifica se necessario.
+        <div style={{marginBottom:16}}>
+          <div className="flbl">Supermercato dello scontrino</div>
+          <div style={{position:'relative'}}>
+            <select className="sel" style={{height:44}} value={smId||''} onChange={e=>setSmId(Number(e.target.value))}>
+              <option value="">— nessuno —</option>
+              {data.supermercati.map(s=><option key={s.id} value={s.id}>{s.nome}</option>)}
+            </select>
+            <span style={{position:'absolute',right:14,top:13,pointerEvents:'none'}}><IDown s={18}/></span>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8,marginBottom:14}}>
+          {nNew>0&&<span className="badge-new">🆕 {nNew} nuovi</span>}
+          {nUpd>0&&<span className="badge-upd">🔄 {nUpd} da aggiornare</span>}
         </div>
         {items.map((p,i)=>(
           <div className="conf-item" key={i} style={{opacity:p.selected?1:.5}}>
-            {/* riga nome + checkbox */}
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
-              <input type="checkbox" className="conf-check" checked={p.selected}
-                onChange={()=>upd(i,'selected',!p.selected)}/>
-              <input className="inp" style={{flex:1,height:42,fontWeight:600}}
-                value={p.nome} onChange={e=>upd(i,'nome',e.target.value)}/>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:8}}>
+              <input type="checkbox" className="conf-check" checked={p.selected} onChange={()=>upd(i,'selected',!p.selected)}/>
+              <div style={{flex:1,minWidth:0}}>
+                <input className="inp" style={{height:40,fontWeight:600}} value={p.nome} onChange={e=>upd(i,'nome',e.target.value)}/>
+                {p.match&&<div style={{fontSize:11,color:'#7c876d',marginTop:3}}>🔄 Aggiorna "{p.match.nome}" · attuale {eur(p.match.prezzo)}</div>}
+              </div>
+              {p.match?<span className="badge-upd">AGG.</span>:<span className="badge-new">NUOVO</span>}
             </div>
             {p.selected&&(
               <div className="scan-grid">
-                {/* categoria */}
-                <div style={{flex:'1 1 140px'}}>
+                <div style={{flex:'1 1 130px'}}>
                   <div className="flbl">Categoria</div>
-                  <div style={{position:'relative'}}>
-                    <select className="sel" style={{height:38}}
-                      value={p.cat_id} onChange={e=>upd(i,'cat_id',Number(e.target.value))}>
-                      {data.categorie.map(c=><option key={c.id} value={c.id}>{c.nome}</option>)}
-                    </select>
-                  </div>
+                  <select className="sel" style={{height:36}} value={p.cat_id} onChange={e=>upd(i,'cat_id',Number(e.target.value))}>
+                    {data.categorie.map(c=><option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
                 </div>
-                {/* quantità */}
                 <div>
-                  <div className="flbl">Qta</div>
-                  <div style={{display:'flex',alignItems:'center',gap:6,height:38}}>
-                    <button className="stepb" style={{width:32,height:32}}
-                      onClick={()=>upd(i,'qta',Math.max(0.1,parseFloat(p.qta)-1))}><IMinus s={14}c="#fff"/></button>
-                    <span style={{fontWeight:700,minWidth:26,textAlign:'center'}}>{p.qta}</span>
-                    <button className="stepb" style={{width:32,height:32}}
-                      onClick={()=>upd(i,'qta',parseFloat(p.qta)+1)}><IPlus s={14}c="#fff"/></button>
+                  <div className="flbl">Qtà</div>
+                  <div style={{display:'flex',alignItems:'center',gap:4,height:36}}>
+                    <button className="stepb" style={{width:28,height:28}} onClick={()=>upd(i,'qta',Math.max(0.1,parseFloat(p.qta)-1))}><IMinus s={12}c="#fff"/></button>
+                    <span style={{fontWeight:700,minWidth:22,textAlign:'center'}}>{p.qta}</span>
+                    <button className="stepb" style={{width:28,height:28}} onClick={()=>upd(i,'qta',parseFloat(p.qta)+1)}><IPlus s={12}c="#fff"/></button>
                   </div>
                 </div>
-                {/* unità */}
                 <div>
                   <div className="flbl">Unità</div>
-                  <div className="seg" style={{height:38,padding:3,gap:3,width:110}}>
-                    {UNITA.map(u=><button key={u} className={'segb'+(p.unita===u?' on':'')}
-                      style={{height:32,fontSize:13}} onClick={()=>upd(i,'unita',u)}>{u}</button>)}
+                  <div className="seg" style={{height:34,padding:2,gap:2,width:96}}>
+                    {UNITA.map(u=><button key={u} className={'segb'+(p.unita===u?' on':'')} style={{height:30,fontSize:12}} onClick={()=>upd(i,'unita',u)}>{u}</button>)}
                   </div>
                 </div>
-                {/* prezzo */}
                 <div>
-                  <div className="flbl">€ Prezzo</div>
-                  <div style={{position:'relative',width:80}}>
-                    <span style={{position:'absolute',left:9,top:9,color:'#7c876d',fontWeight:600,fontSize:14}}>€</span>
-                    <input className="inp-sm" style={{paddingLeft:22,width:80,height:38}}
-                      value={p.prezzo} onChange={e=>upd(i,'prezzo',e.target.value)}/>
+                  <div className="flbl">€</div>
+                  <div style={{position:'relative',width:72}}>
+                    <span style={{position:'absolute',left:7,top:9,color:'#7c876d',fontSize:12,fontWeight:600}}>€</span>
+                    <input className="inp-sm" style={{paddingLeft:18,width:72,height:34}} value={p.prezzo} onChange={e=>upd(i,'prezzo',e.target.value)}/>
                   </div>
                 </div>
               </div>
@@ -453,9 +462,9 @@ function ScontrinoScanner({data, onClose, onDone}) {
         <div style={{height:8}}/>
       </div>
       <div style={{flex:'none',padding:'10px 20px 14px',borderTop:'1px solid #e7ece0'}}>
-        <button className="btnG" disabled={nSel===0} style={{opacity:nSel>0?1:.45}}
-          onClick={save}>
-          Aggiungi {nSel} {nSel===1?'prodotto':'prodotti'} all'inventario
+        <button className="btnG" disabled={nSel===0} style={{opacity:nSel>0?1:.45}} onClick={save}>
+          {nNew>0&&nUpd>0?`Aggiungi ${nNew} nuovi · aggiorna ${nUpd}`:
+           nNew>0?`Aggiungi ${nNew} all'inventario`:`Aggiorna ${nUpd} prodotti`}
         </button>
       </div>
     </div>
@@ -523,6 +532,9 @@ const db = {
   },
   addMovimento:(prod_id,delta,qta_dopo,nota='')=>sbPost('movimenti',{prod_id,delta,qta_dopo,nota}),
   getMovimenti:(prod_id)=>sbGet(`movimenti?prod_id=eq.${prod_id}&order=data.desc&limit=12&select=delta,qta_dopo,data`),
+  clearInventario:()=>sbDel('prodotti','id=gt.0'),
+  clearVoci:()=>sbDel('voci','id=gt.0'),
+  archiviaSpesa:(voci,totale,n)=>sbPost('storico_spese',{n_prodotti:n,totale_stimato:totale,voci:JSON.stringify(voci)}),
 };
 
 /* ================================================================
@@ -770,8 +782,9 @@ function QuickAdd({data, onAddExisting, onCreateNew}) {
 /* ================================================================
    SPESA SCREEN
    ================================================================ */
-function SpesaScreen({data,onToggle,onRemove,onAddExisting,onCreateNew}){
+function SpesaScreen({data,onToggle,onRemove,onAddExisting,onCreateNew,onAzzera}){
   const [showFilter,setShowFilter]=useState(false);
+  const [confirmAzzera,setConfirmAzzera]=useState(false);
   const [filters,setFilters]=useState({sm:null,cat:null});
   const {voci,prodotti,categorie,membri,supermercati,corsie}=data;
 
@@ -819,6 +832,16 @@ function SpesaScreen({data,onToggle,onRemove,onAddExisting,onCreateNew}){
           </div>
           <span style={{fontSize:13,fontWeight:700,color:"#7c876d",whiteSpace:"nowrap"}}>{presi}/{tot} presi</span>
         </div>
+        {/* azzera spesa */}
+        {tot>0&&(
+          <div style={{display:'flex',justifyContent:'flex-end',marginTop:4,marginBottom:2}}>
+            <button onClick={()=>setConfirmAzzera(true)}
+              style={{background:'none',border:'1px solid #dc262660',borderRadius:10,
+                padding:'4px 11px',fontSize:12,fontWeight:700,color:'#dc2626',cursor:'pointer'}}>
+              ✓ Azzera spesa
+            </button>
+          </div>
+        )}
         {/* membri */}
         <div style={{display:"flex",gap:14,margin:"12px 0 4px"}}>
           {membri.map(m=>(
@@ -902,6 +925,16 @@ function SpesaScreen({data,onToggle,onRemove,onAddExisting,onCreateNew}){
         <div style={{height:6}}/>
       </div>
       <QuickAdd data={data} onAddExisting={onAddExisting} onCreateNew={onCreateNew}/>
+      {confirmAzzera&&(
+        <div className="modal-bg" onClick={()=>setConfirmAzzera(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-title">Azzera la spesa?</div>
+            <div className="modal-body">La lista verrà salvata nello storico e poi svuotata. Questa azione non si può annullare.</div>
+            <button className="btn-red" onClick={()=>{setConfirmAzzera(false);onAzzera&&onAzzera();}}>Sì, azzera la spesa</button>
+            <button className="btnT" onClick={()=>setConfirmAzzera(false)}>Annulla</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -909,10 +942,11 @@ function SpesaScreen({data,onToggle,onRemove,onAddExisting,onCreateNew}){
 /* ================================================================
    INVENTARIO SCREEN
    ================================================================ */
-function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
+function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone,onClearAll}){
   const [q,setQ]=useState("");
   const [cat,setCat]=useState(null);
   const [showScanner,setShowScanner]=useState(false);
+  const [confirmClear,setConfirmClear]=useState(false);
   const {prodotti,categorie}=data;
   const lista=useMemo(()=>prodotti
     .filter(p=>!cat||p.cat_id==cat)
@@ -926,6 +960,7 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
           <div style={{display:'flex',gap:10}}>
             <button className="fab" style={{background:'#3a9b8f'}} onClick={()=>setShowScanner(true)} title="Scontrino AI">🧾</button>
             <button className="fab" onClick={onNew}><IPlus s={24}c="#fff"/></button>
+            <button className="fab" style={{background:'#dc2626'}} onClick={()=>setConfirmClear(true)} title="Cancella tutto"><ITrash s={20}c="#fff"/></button>
           </div>
         </div>
         <div style={{display:"flex",gap:8,margin:"14px 0 6px"}}>
@@ -993,6 +1028,16 @@ function InventarioScreen({data,onAdd,onEdit,onNew,onDelete,onScannerDone}){
         </div>
         <div style={{height:8}}/>
       </div>
+    {confirmClear&&(
+      <div className="modal-bg" onClick={()=>setConfirmClear(false)}>
+        <div className="modal" onClick={e=>e.stopPropagation()}>
+          <div className="modal-title">Cancellare tutto l'inventario?</div>
+          <div className="modal-body">Tutti i {data.prodotti.length} prodotti verranno eliminati definitivamente insieme ai loro prezzi e alle voci nella lista spesa.</div>
+          <button className="btn-red" onClick={()=>{setConfirmClear(false);onClearAll&&onClearAll();}}>Sì, cancella tutto</button>
+          <button className="btnT" onClick={()=>setConfirmClear(false)}>Annulla</button>
+        </div>
+      </div>
+    )}
     {showScanner&&<ScontrinoScanner data={data}
       onClose={()=>setShowScanner(false)}
       onDone={()=>{setShowScanner(false);onScannerDone&&onScannerDone();}}/>
@@ -1080,9 +1125,11 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
           <div style={{flex:1}}>
             <div className="flbl">Quantità</div>
             <div className="stepper">
-              <button className="stepb" onClick={()=>setQta(Math.max(0,Number(qta)-1))}><IMinus s={18}c="#fff"/></button>
-              <span className="stepv">{qta}</span>
-              <button className="stepb" onClick={()=>setQta(Number(qta)+1)}><IPlus s={18}c="#fff"/></button>
+              <button className="stepb" onClick={()=>setQta(p=>{const n=parseFloat(String(p).replace(',','.'))||0;return Math.max(0,n-1);})}><IMinus s={18}c="#fff"/></button>
+              <input className="stepv-input" type="text" inputMode="decimal" value={qta}
+                onChange={e=>setQta(e.target.value)}
+                onBlur={e=>{const n=parseFloat(String(e.target.value).replace(',','.'));setQta(isNaN(n)||n<0?0:n);}}/>
+              <button className="stepb" onClick={()=>setQta(p=>{const n=parseFloat(String(p).replace(',','.'))||0;return n+1;})}><IPlus s={18}c="#fff"/></button>
             </div>
           </div>
         </div>
@@ -1269,52 +1316,90 @@ function FamigliaScreen({data,onChanged,onBack}){
 }
 
 function CategorieScreen({data,onChanged,onBack}){
-  const [nome,setNome]=useState("");
-  const [colore,setColore]=useState(COLORS[4]);
+  const [nomeNew,setNomeNew]=useState('');
+  const [coloreNew,setColoreNew]=useState(COLORS[4]);
+  const [exp,setExp]=useState(null);
+  const [editNome,setEditNome]=useState('');
+  const [editColore,setEditColore]=useState('');
+  const [corsieLocal,setCorsieLocal]=useState({});
+
+  useEffect(()=>{
+    const m={};
+    (data.corsie||[]).forEach(c=>{if(!m[c.cat_id])m[c.cat_id]={};m[c.cat_id][c.sm_id]=c.n;});
+    setCorsieLocal(m);
+  },[data.corsie]);
+
   const sorted=[...data.categorie].sort((a,b)=>a.corsia-b.corsia);
-  const add=async()=>{const t=nome.trim();if(!t)return;await db.addCategoria(t,colore);setNome("");onChanged();};
-  const del=async id=>{await db.removeCategoria(id);onChanged();};
+
+  const add=async()=>{const t=nomeNew.trim();if(!t)return;await db.addCategoria(t,coloreNew);setNomeNew('');onChanged();};
+  const del=async id=>{await db.removeCategoria(id);if(exp===id)setExp(null);onChanged();};
   const move=async(id,dir)=>{await db.moveCategoria(id,dir);onChanged();};
+  const openEdit=cat=>{setExp(exp===cat.id?null:cat.id);setEditNome(cat.nome);setEditColore(cat.colore);};
+  const setCorsiaVal=(catId,smId,val)=>setCorsieLocal(prev=>({...prev,[catId]:{...prev[catId],[smId]:val}}));
+
+  const saveEdit=async cat=>{
+    await sbPatch('categorie',`id=eq.${cat.id}`,{nome:editNome.trim()||cat.nome,colore:editColore});
+    const m=corsieLocal[cat.id]||{};
+    for(const[smId,n]of Object.entries(m)){
+      const num=parseInt(n);if(!isNaN(num)&&num>0)await db.upsertCorsia(Number(smId),cat.id,num);
+    }
+    setExp(null);onChanged();
+  };
+
   return(
     <SubScreen title="Categorie" onBack={onBack}>
-      <div style={{fontSize:12,color:"#aab39c",fontWeight:500,marginBottom:12}}>
-        Ordina le categorie per replicare il percorso nel tuo supermercato.
+      <div style={{fontSize:12,color:'#aab39c',fontWeight:500,marginBottom:14}}>
+        Tocca per modificare nome, colore e corsie per supermercato.
       </div>
       {sorted.map((c,i)=>(
-        <div className="sub-row" key={c.id}>
-          <span className="dot" style={{width:36,height:36,background:c.colore,fontSize:16,borderRadius:12}}>
-            {c.nome[0]}
-          </span>
-          <div style={{flex:1}}>
-            <div className="sub-name">{c.nome}</div>
-            <div style={{fontSize:11,color:"#aab39c",fontWeight:600}}>Corsia {c.corsia}</div>
+        <div key={c.id} style={{marginBottom:9}}>
+          <div className="sub-row" style={{cursor:'pointer'}} onClick={()=>openEdit(c)}>
+            <span className="dot" style={{width:36,height:36,background:c.colore,fontSize:16,borderRadius:12,flex:'none'}}>{c.nome[0]}</span>
+            <div style={{flex:1}}>
+              <div className="sub-name">{c.nome}</div>
+            </div>
+            <button className="sub-del" onClick={e=>{e.stopPropagation();del(c.id);}}><ITrash s={15}/></button>
           </div>
-          <div style={{display:"flex",gap:4}}>
-            <button className="ord-btn" onClick={()=>move(c.id,-1)} disabled={i===0}
-              style={{opacity:i===0?.35:1}}><IUp s={15}c="#7c876d"/></button>
-            <button className="ord-btn" onClick={()=>move(c.id,1)} disabled={i===sorted.length-1}
-              style={{opacity:i===sorted.length-1?.35:1}}><IDown s={15}c="#7c876d"/></button>
-          </div>
-          <button className="sub-del" onClick={()=>del(c.id)}><ITrash s={15}/></button>
+          {exp===c.id&&(
+            <div style={{background:'#f9fbf7',border:'1px solid #e7ece0',borderTop:'none',borderRadius:'0 0 16px 16px',padding:'12px 14px 16px'}}>
+              <div className="flbl">Nome</div>
+              <input className="inp" style={{marginBottom:12,height:44}} value={editNome} onChange={e=>setEditNome(e.target.value)}/>
+              <div className="flbl">Colore</div>
+              <div style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:14}}>
+                {COLORS.map(col=><span key={col} className={'swatch'+(editColore===col?' on':'')} style={{background:col}} onClick={()=>setEditColore(col)}/>)}
+              </div>
+              {data.supermercati.length>0&&<>
+                <div className="flbl">Corsie per supermercato</div>
+                <div className="corsia-grid">
+                  {data.supermercati.map(s=>(
+                    <div className="corsia-row" key={s.id}>
+                      <span className="corsia-label">{s.nome}</span>
+                      <input type="number" className="corsia-num" min="1" placeholder="—"
+                        value={corsieLocal[c.id]?.[s.id]||''}
+                        onChange={e=>setCorsiaVal(c.id,s.id,e.target.value)}/>
+                    </div>
+                  ))}
+                </div>
+              </>}
+              <button className="btnG" style={{marginTop:14,height:44,fontSize:14}} onClick={()=>saveEdit(c)}>Salva modifiche</button>
+            </div>
+          )}
         </div>
       ))}
-      <div className="add-form" style={{flexDirection:"column",alignItems:"flex-start",gap:10}}>
-        <div style={{display:"flex",gap:8,width:"100%"}}>
-          <input className="inp" placeholder="Nome categoria…" value={nome} onChange={e=>setNome(e.target.value)}
-            onKeyDown={e=>e.key==="Enter"&&add()}/>
+      {data.categorie.length===0&&<div className="empty">Nessuna categoria</div>}
+      <div className="add-form" style={{flexDirection:'column',alignItems:'flex-start',gap:10}}>
+        <div style={{display:'flex',gap:8,width:'100%'}}>
+          <input className="inp" placeholder="Nuova categoria…" value={nomeNew}
+            onChange={e=>setNomeNew(e.target.value)} onKeyDown={e=>e.key==='Enter'&&add()}/>
           <button className="fab" style={{width:46,height:46}} onClick={add}><IPlus s={22}c="#fff"/></button>
         </div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {COLORS.map(col=>(
-            <span key={col} className={"swatch"+(colore===col?" on":"")}
-              style={{background:col}} onClick={()=>setColore(col)}/>
-          ))}
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {COLORS.map(col=><span key={col} className={'swatch'+(coloreNew===col?' on':'')} style={{background:col}} onClick={()=>setColoreNew(col)}/>)}
         </div>
       </div>
     </SubScreen>
   );
 }
-
 function PrezziScreen({data,onChanged,onBack}){
   const [exp,setExp]=useState(null);
   const [localP,setLocalP]=useState({});// {prod_id: {sm_id: val}}
@@ -1483,19 +1568,30 @@ function App(){
 
   const onToggle=async v=>{await db.setPreso(v.id,!v.preso);await load();};
   const onDeleteProdotto=async p=>{
-    if(!p||p.id===undefined||p.id===null){
-      showToast('Errore: id prodotto mancante');
-      return;
-    }
+    if(!p||p.id===undefined||p.id===null){showToast('Errore: id prodotto mancante');return;}
     showToast(`Elimino "${p.nome}"…`);
+    try{await db.deleteProdotto(p.id);await load();showToast(`"${p.nome}" eliminato ✓`);}
+    catch(e){showToast('Errore: '+e.message);}
+  };
+  const onAzzera=async()=>{
     try{
-      await db.deleteProdotto(p.id);
+      const snapshot=data.voci.map(v=>{
+        const p=data.prodotti.find(x=>x.id==v.prod_id)||{};
+        return{nome:p.nome,qta:v.qta,unita:p.unita,prezzo:p.prezzo||0,preso:v.preso};
+      });
+      const totale=data.voci.filter(v=>v.preso).reduce((s,v)=>{
+        const p=data.prodotti.find(x=>x.id==v.prod_id)||{};
+        return s+(p.prezzo||0)*v.qta;
+      },0);
+      await db.archiviaSpesa(snapshot,totale,data.voci.length);
+      await db.clearVoci();
       await load();
-      showToast(`"${p.nome}" eliminato ✓`);
-    }catch(e){
-      showToast('Errore: '+e.message);
-      console.error('deleteProdotto error',e);
-    }
+      showToast('Spesa completata e salvata ✓');
+    }catch(e){showToast('Errore: '+e.message);}
+  };
+  const onClearAll=async()=>{
+    try{await db.clearInventario();await load();showToast('Inventario svuotato');}
+    catch(e){showToast('Errore: '+e.message);}
   };
   const onRemove=async v=>{
     try{await db.removeVoce(v.id);await load();}
@@ -1518,8 +1614,8 @@ function App(){
   return(
     <div className="app">
       <div className="safe-top"/>
-      {screen==="spesa"&&<SpesaScreen data={data} onToggle={onToggle} onRemove={onRemove} onAddExisting={onAdd} onCreateNew={onCreateNew}/>}
-      {screen==="inventario"&&<InventarioScreen data={data} onAdd={onAdd} onEdit={p=>setEditing(p)} onNew={()=>setEditing("new")} onDelete={onDeleteProdotto} onScannerDone={load}/>}
+      {screen==="spesa"&&<SpesaScreen data={data} onToggle={onToggle} onRemove={onRemove} onAddExisting={onAdd} onCreateNew={onCreateNew} onAzzera={onAzzera}/>}
+      {screen==="inventario"&&<InventarioScreen data={data} onAdd={onAdd} onEdit={p=>setEditing(p)} onNew={()=>setEditing("new")} onDelete={onDeleteProdotto} onScannerDone={load} onClearAll={onClearAll}/>}
       {screen==="impostazioni"&&<SettingsScreen data={data} onChanged={load}/>}
       <TabBar screen={screen} set={setScreen}/>
       {editing&&(

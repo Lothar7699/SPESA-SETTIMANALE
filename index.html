@@ -324,6 +324,15 @@ function ScontrinoScanner({data, onClose, onDone}) {
     img.src=url;
   };
 
+  // Fuzzy match: somiglianza nome per dedup cross-inventario
+  const fuzzyNome=(a,b)=>{
+    const na=a.toLowerCase().trim(), nb=b.toLowerCase().trim();
+    if(na===nb)return true;
+    const wa=na.split(/\s+/), wb=nb.split(/\s+/);
+    const common=wa.filter(w=>w.length>3&&wb.some(v=>v.startsWith(w)||w.startsWith(v)));
+    return common.length>=Math.min(wa.length,wb.length,2);
+  };
+
   const analyze=async()=>{
     setPhase('analyzing');
     try{
@@ -334,12 +343,29 @@ function ScontrinoScanner({data, onClose, onDone}) {
       });
       const json=await resp.json();
       if(!resp.ok||json.error)throw new Error(json.error||`HTTP ${resp.status}`);
-      const enriched=(json.products||[]).map((p,i)=>{
-        const match=matchProdotto(p.nome);
+
+      // ── STEP 1: dedup interno lista Claude (stesso nome → somma qta) ──
+      const seenNomi=new Map();
+      const prodottiDedup=[];
+      for(const p of (json.products||[])){
+        const key=p.nome.toLowerCase().trim().replace(/\s+/g,' ');
+        if(seenNomi.has(key)){
+          const idx=seenNomi.get(key);
+          prodottiDedup[idx].qta=(parseFloat(prodottiDedup[idx].qta)||1)+(parseFloat(p.qta)||1);
+        }else{
+          seenNomi.set(key,prodottiDedup.length);
+          prodottiDedup.push({...p});
+        }
+      }
+
+      // ── STEP 2: enrich + match inventario esistente (fuzzy) ──
+      const enriched=prodottiDedup.map((p,i)=>{
+        const match=data.prodotti.find(inv=>fuzzyNome(inv.nome,p.nome));
         return{...p,i,
           cat_id:match?.cat_id||data.categorie.find(c=>c.nome===p.cat_nome)?.id||data.categorie.find(c=>c.nome==='Dispensa')?.id||data.categorie[0]?.id,
           selected:true,match};
       });
+
       setItems(enriched);
       setPhase(enriched.length>0?'confirm':'error');
       if(enriched.length===0)setErrMsg('Nessun prodotto rilevato. Prova con una foto più nitida.');
@@ -1079,6 +1105,7 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
   const [unita,setUnita]=useState(prodotto?.unita||"pz");
   const [memId,setMemId]=useState(data.membri[0]?.id);
   const [soglia,setSoglia]=useState(prodotto?.soglia_minima??'');
+  const [smId,setSmId]=useState(prodotto?.sm_id||null);
   // prezzi per supermercato
   const [prezziSM,setPrezziSM]=useState({});
   useEffect(()=>{
@@ -1093,7 +1120,7 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
   const ok=nome.trim().length>0;
   const build=()=>({id:prodotto?.id,nome:nome.trim(),cat_id:catId,
     prezzo:parseFloat(String(prezzo).replace(",","."))||0,
-    qta:Number(qta),unita,sm_id:prodotto?.sm_id||null,
+    qta:Number(qta),unita,sm_id:smId||null,
     soglia_minima:parseFloat(String(soglia).replace(",","."))||0});
   const savePrezzi=async(pid)=>{
     for(const[sid,val]of Object.entries(prezziSM)){
@@ -1114,15 +1141,13 @@ function ModificaScreen({prodotto,data,onDone,onClose}){
         <span style={{fontSize:19,fontWeight:700}}>{isNew?"Nuovo prodotto":"Modifica prodotto"}</span>
       </div>
       <div className="scroll" style={{paddingTop:12}}>
-        <div className="scan" onClick={()=>{}}>
-          <span className="dot" style={{width:46,height:46,background:"#fff",color:"#21281a",borderRadius:12,fontSize:0}}>
-            <IBar/>
-          </span>
-          <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:15,color:"#3a7a1f"}}>Scansiona il prodotto</div>
-            <div style={{fontSize:12.5,color:"#7c876d",fontWeight:500}}>Inquadra il codice a barre</div>
-          </div>
-          <button className="fab" style={{width:44,height:44}}><ICam s={20}/></button>
+        <div className="flbl">Supermercato</div>
+        <div style={{position:"relative",marginBottom:18}}>
+          <select className="sel" value={smId||''} onChange={e=>setSmId(e.target.value?Number(e.target.value):null)}>
+            <option value="">— nessuno —</option>
+            {data.supermercati.map(s=><option key={s.id} value={s.id}>{s.nome}</option>)}
+          </select>
+          <span style={{position:"absolute",right:14,top:16,pointerEvents:"none"}}><IDown s={18}/></span>
         </div>
         <div className="flbl">Nome prodotto</div>
         <input className="inp" style={{height:52,fontSize:16,fontWeight:600}} value={nome}
